@@ -1,0 +1,56 @@
+name = "webwaka-real-estate"
+main = "src/worker.ts"
+compatibility_date = "2025-03-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ─── Staging Environment ───────────────────────────────────────────────────────
+[env.staging]
+name = "webwaka-real-estate-staging"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+# JWT_SECRET — set via: wrangler secret put JWT_SECRET --env staging
+# PAYSTACK_SECRET_KEY — set via: wrangler secret put PAYSTACK_SECRET_KEY --env staging
+# OPENROUTER_API_KEY — set via: wrangler secret put OPENROUTER_API_KEY --env staging
+# TERMII_API_KEY — set via: wrangler secret put TERMII_API_KEY --env staging
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "webwaka-real-estate-db-staging"
+database_id = "PLACEHOLDER_STAGING_D1_ID"
+
+[[env.staging.kv_namespaces]]
+binding = "SESSIONS_KV"
+id = "PLACEHOLDER_STAGING_SESSIONS_KV_ID"
+
+[[env.staging.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "PLACEHOLDER_STAGING_RATE_LIMIT_KV_ID"
+
+[[env.staging.r2_buckets]]
+binding = "PROPERTY_MEDIA"
+bucket_name = "webwaka-real-estate-media-staging"
+
+# ─── Production Environment ────────────────────────────────────────────────────
+[env.production]
+name = "webwaka-real-estate-production"
+
+[env.production.vars]
+ENVIRONMENT = "production"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "webwaka-real-estate-db-production"
+database_id = "PLACEHOLDER_PRODUCTION_D1_ID"
+
+[[env.production.kv_namespaces]]
+binding = "SESSIONS_KV"
+id = "PLACEHOLDER_PRODUCTION_SESSIONS_KV_ID"
+
+[[env.production.kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "PLACEHOLDER_PRODUCTION_RATE_LIMIT_KV_ID"
+
+[[env.production.r2_buckets]]
+binding = "PROPERTY_MEDIA"
+bucket_name = "webwaka-real-estate-media-production"
