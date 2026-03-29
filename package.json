@@ -1,0 +1,28 @@
+{
+  "name": "@webwaka/real-estate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WebWaka Real Estate Suite — Property listings, tenancy management, and mortgage tools for Nigeria and Africa",
+  "scripts": {
+    "dev": "wrangler dev --env staging",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit && echo 'No console.log allowed' && ! grep -r 'console\\.log' src/ --include='*.ts' || (echo 'FAIL: console.log found in src/' && exit 1)"
+  },
+  "dependencies": {
+    "@webwaka/core": "github:WebWakaDOS/webwaka-core",
+    "dexie": "^4.0.8",
+    "hono": "^4.7.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250327.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.12.0"
+  }
+}
