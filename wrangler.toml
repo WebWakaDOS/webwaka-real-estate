@@ -18,15 +18,15 @@ ENVIRONMENT = "staging"
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "webwaka-real-estate-db-staging"
-database_id = "PLACEHOLDER_REAL_ESTATE_D1_STAGING_ID"
+database_id = "NEEDS_D1_UPGRADE"
 
 [[env.staging.kv_namespaces]]
 binding = "TENANT_CONFIG"
-id = "PLACEHOLDER_REAL_ESTATE_KV_STAGING_ID"
+id = "7a9ed1992f224a1fb3583557fd996d25"
 
 [[env.staging.kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "PLACEHOLDER_REAL_ESTATE_RATE_LIMIT_KV_STAGING_ID"
+id = "75c03d9076c84759b6fa5ae4f1b71880"
 
 [[env.staging.r2_buckets]]
 binding = "DOCUMENTS"
@@ -47,15 +47,15 @@ ENVIRONMENT = "production"
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "webwaka-real-estate-db-prod"
-database_id = "PLACEHOLDER_REAL_ESTATE_D1_PROD_ID"
+database_id = "NEEDS_D1_UPGRADE"
 
 [[env.production.kv_namespaces]]
 binding = "TENANT_CONFIG"
-id = "PLACEHOLDER_REAL_ESTATE_KV_PROD_ID"
+id = "29c59dc2ee8442c9af03789ae0d592b6"
 
 [[env.production.kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "PLACEHOLDER_REAL_ESTATE_RATE_LIMIT_KV_PROD_ID"
+id = "c9e17a143b364922a29975ea8a5e8c70"
 
 [[env.production.r2_buckets]]
 binding = "DOCUMENTS"
