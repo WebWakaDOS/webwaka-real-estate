@@ -117,7 +117,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 migrations apply webwaka-real-estate-db-staging --env staging --remote
+          command: d1 migrations apply modules_prod --env staging --remote
         continue-on-error: true  # D1 may need upgrade
 
       - name: Deploy Workers to Staging
@@ -172,7 +172,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 migrations apply webwaka-real-estate-db-prod --env production --remote
+          command: d1 migrations apply modules_prod --env production --remote
         continue-on-error: true  # D1 may need upgrade
 
       - name: Deploy Workers to Production
