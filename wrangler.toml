@@ -35,7 +35,7 @@ bucket_name = "webwaka-real-estate-docs-staging"
 # ─── Production Environment ───────────────────────────────────────────────────
 [env.production]
 name = "webwaka-real-estate-api-prod"
-route = { pattern = "real-estate.webwaka.app/*", zone_name = "webwaka.app" }
+workers_dev = true
 
 [env.production.vars]
 ENVIRONMENT = "production"
