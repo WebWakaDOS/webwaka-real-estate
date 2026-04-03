@@ -3,6 +3,28 @@ main = "src/worker.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
+# ─── Local Development ────────────────────────────────────────────────────────
+[vars]
+ENVIRONMENT = "development"
+JWT_SECRET = "dev-secret-change-in-production"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "webwaka-real-estate-local"
+database_id = "local"
+
+[[kv_namespaces]]
+binding = "TENANT_CONFIG"
+id = "local-tenant-config"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "local-rate-limit"
+
+[[r2_buckets]]
+binding = "DOCUMENTS"
+bucket_name = "webwaka-real-estate-docs-local"
+
 # ─── Staging Environment ──────────────────────────────────────────────────────
 [env.staging]
 name = "webwaka-real-estate-api-staging"
