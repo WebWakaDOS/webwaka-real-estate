@@ -320,6 +320,76 @@ describe('POST /api/re/agents/:id/listings/:listingId — assignment gate', () =
   });
 });
 
+// ─── Reject clears stale audit fields ────────────────────────────────────────
+
+describe('POST /api/re/agents/:id/verification/reject — audit field clearing', () => {
+  it('clears verified_at and verified_by when rejecting a previously verified agent', async () => {
+    const runMock = vi.fn().mockResolvedValue({ meta: { changes: 1 } });
+    const bindMock = vi.fn().mockReturnThis();
+    const db = {
+      prepare: vi.fn().mockReturnValue({
+        bind: bindMock,
+        first: vi.fn().mockResolvedValue({ id: 'agent_v1', verification_status: 'verified' }),
+        run: runMock,
+      }),
+    };
+
+    const env = makeEnv(null, { DB: db });
+    const req = new Request('http://localhost/api/re/agents/agent_v1/verification/reject', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Revoked — licence expired' }),
+    });
+
+    const res = await app.fetch(req, env, {} as ExecutionContext);
+    expect(res.status).toBe(200);
+
+    // Verify the UPDATE SQL included NULL-clearing of audit fields
+    const sqlCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes('verified_at = NULL'),
+    );
+    expect(sqlCall).toBeDefined();
+  });
+});
+
+// ─── Rejected agent document re-upload transitions to pending_docs ─────────────
+
+describe('Document upload — rejected agent re-submission', () => {
+  it('transitions a rejected agent to pending_docs when they upload a corrective document', async () => {
+    const runMock = vi.fn().mockResolvedValue({ meta: { changes: 1 } });
+    const db = {
+      prepare: vi.fn().mockReturnValue({
+        bind: vi.fn().mockReturnThis(),
+        first: vi.fn().mockResolvedValue({ id: 'agent_r1', verification_status: 'rejected' }),
+        run: runMock,
+      }),
+    };
+    const r2 = { put: vi.fn().mockResolvedValue(undefined) };
+
+    const formData = new FormData();
+    const fileContent = new Uint8Array([137, 80, 78, 71]); // PNG magic bytes
+    formData.append('document', new File([fileContent], 'cert.png', { type: 'image/png' }));
+
+    const env = makeEnv(null, { DB: db, DOCUMENTS: r2 });
+    const req = new Request('http://localhost/api/re/agents/agent_r1/documents', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const res = await app.fetch(req, env, {} as ExecutionContext);
+    expect(res.status).toBe(200);
+
+    // Verify the SQL includes the CASE covering 'rejected'
+    const sqlCall = (db.prepare as ReturnType<typeof vi.fn>).mock.calls.find(
+      (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes("'rejected'"),
+    );
+    expect(sqlCall).toBeDefined();
+
+    // R2 put was called
+    expect(r2.put).toHaveBeenCalledOnce();
+  });
+});
+
 // ─── GET /api/re/agents/pending-verification ──────────────────────────────────
 
 describe('GET /api/re/agents/pending-verification', () => {

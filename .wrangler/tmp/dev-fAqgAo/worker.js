@@ -3831,7 +3831,10 @@ app3.post("/api/re/agents/:id/documents", requireRole(["admin", "super_admin", "
     `UPDATE re_agents
      SET esvarbon_doc_key = ?,
          esvarbon_doc_uploaded_at = ?,
-         verification_status = CASE WHEN verification_status = 'unverified' THEN 'pending_docs' ELSE verification_status END,
+         verification_status = CASE
+           WHEN verification_status IN ('unverified', 'rejected') THEN 'pending_docs'
+           ELSE verification_status
+         END,
          updated_at = ?
      WHERE id = ? AND tenant_id = ?`
   ).bind(r2Key, now, now, agentId, tenantId).run();
@@ -3865,7 +3868,7 @@ app3.post("/api/re/agents/:id/verify", requireRole(["admin", "super_admin"]), as
   ).bind(now, now, agentId, tenantId).run();
   const result = await verifyEsvarbonNumber(agent.esvarbon_reg_no, {
     ESVARBON_API_URL: c.env.ESVARBON_API_URL,
-    ESVARBON_API_KEY: c.env["ESVARBON_API_KEY"]
+    ESVARBON_API_KEY: c.env.ESVARBON_API_KEY
   });
   if (result.status === "verified") {
     await c.env.DB.prepare(
@@ -3967,6 +3970,9 @@ app3.post("/api/re/agents/:id/verification/reject", requireRole(["admin", "super
      SET verification_status = 'rejected',
          esvarbon_verified = 0,
          rejection_reason = ?,
+         verified_at = NULL,
+         verified_by = NULL,
+         verification_method = NULL,
          updated_at = ?
      WHERE id = ? AND tenant_id = ?`
   ).bind(body.reason ?? "Rejected by admin", now, agentId, tenantId).run();
@@ -4083,7 +4089,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env2, _ctx, middlewareCtx
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-CoLHMn/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-wRbxt8/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -4115,7 +4121,7 @@ function __facade_invoke__(request, env2, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-CoLHMn/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-wRbxt8/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;

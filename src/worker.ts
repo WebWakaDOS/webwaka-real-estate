@@ -31,6 +31,9 @@ export interface Env {
   INTER_SERVICE_SECRET?: string;
   CENTRAL_MGMT_URL?: string;
   ENVIRONMENT?: string;
+  // T-RES-01: ESVARBON agent verification (optional — absence triggers manual fallback)
+  ESVARBON_API_URL?: string;
+  ESVARBON_API_KEY?: string;
 }
 
 export default {

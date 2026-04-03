@@ -217,7 +217,10 @@ app.post('/api/re/agents/:id/documents', requireRole(['admin', 'super_admin', 'a
     `UPDATE re_agents
      SET esvarbon_doc_key = ?,
          esvarbon_doc_uploaded_at = ?,
-         verification_status = CASE WHEN verification_status = 'unverified' THEN 'pending_docs' ELSE verification_status END,
+         verification_status = CASE
+           WHEN verification_status IN ('unverified', 'rejected') THEN 'pending_docs'
+           ELSE verification_status
+         END,
          updated_at = ?
      WHERE id = ? AND tenant_id = ?`
   ).bind(r2Key, now, now, agentId, tenantId).run();
@@ -267,7 +270,7 @@ app.post('/api/re/agents/:id/verify', requireRole(['admin', 'super_admin']), asy
 
   const result = await verifyEsvarbonNumber(agent.esvarbon_reg_no, {
     ESVARBON_API_URL: c.env.ESVARBON_API_URL,
-    ESVARBON_API_KEY: (c.env as unknown as Record<string, string>)['ESVARBON_API_KEY'],
+    ESVARBON_API_KEY: c.env.ESVARBON_API_KEY,
   });
 
   if (result.status === 'verified') {
@@ -391,6 +394,9 @@ app.post('/api/re/agents/:id/verification/reject', requireRole(['admin', 'super_
      SET verification_status = 'rejected',
          esvarbon_verified = 0,
          rejection_reason = ?,
+         verified_at = NULL,
+         verified_by = NULL,
+         verification_method = NULL,
          updated_at = ?
      WHERE id = ? AND tenant_id = ?`
   ).bind(body.reason ?? 'Rejected by admin', now, agentId, tenantId).run();
