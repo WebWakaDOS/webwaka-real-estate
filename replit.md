@@ -39,6 +39,47 @@ Local D1 database is initialized via: `wrangler d1 execute webwaka-real-estate-l
 
 Local dev JWT_SECRET is set to `dev-secret-change-in-production` in `wrangler.toml`.
 
+## T-RES-01: ESVARBON Agent Verification (implemented)
+
+### Overview
+Agents must be verified against the ESVARBON register before they can publish listings or be assigned to listings.
+
+### Verification State Machine
+```
+unverified → pending_api  → verified   (esvarbon_api method)
+unverified → pending_docs → manual_review → verified  (manual method)
+                                          → rejected
+```
+
+### Key Invariants
+- **Nigeria-First fallback:** If `ESVARBON_API_URL` is not set or the API is unavailable, agents move to `manual_review` queue — admins verify uploaded documents instead.
+- **Listing publication gate:** Agents with `verification_status != 'verified'` are blocked with HTTP 403 from creating listings.
+- **Assignment gate:** Unverified agents cannot be assigned to any listing.
+- **Multi-tenant:** Every query is scoped by `tenant_id`.
+
+### New API Endpoints
+- `GET  /api/re/agents/pending-verification` — Admin queue of agents awaiting manual review
+- `GET  /api/re/agents?verification_status=<status>` — Filter agents by verification state
+- `POST /api/re/agents/:id/documents` — Upload ESVARBON certificate to R2 (multipart/form-data)
+- `POST /api/re/agents/:id/verify` — Trigger automated ESVARBON API check → auto-fallback to manual_review
+- `POST /api/re/agents/:id/verification/approve` — Admin manual approval
+- `POST /api/re/agents/:id/verification/reject` — Admin manual rejection (with reason)
+
+### New Files
+- `migrations/002_agent_verification.sql` — Adds 9 new columns + index to `re_agents`
+- `src/modules/agents/esvarbon.ts` — ESVARBON API service with graceful fallback
+- `src/modules/agents/esvarbon.test.ts` — 10 service tests
+- `src/modules/agents/api/index.test.ts` — 19 API tests
+
+### Environment Variables (optional)
+- `ESVARBON_API_URL` — Base URL for ESVARBON verification API (if available)
+- `ESVARBON_API_KEY` — Bearer token for the ESVARBON API
+
+### Verified Agent Badge
+- `GET /api/re/listings` includes `has_verified_agent: boolean` per result
+- `GET /api/re/listings/:id` includes `is_verified_badge` per agent and `has_verified_agent` at listing level
+- `GET /api/re/listings?verified_agents_only=1` filters to listings with verified agents only
+
 ## Deployment
 
 Deploys to Cloudflare Workers via `wrangler`:

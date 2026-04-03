@@ -3274,11 +3274,16 @@ app.get("/api/re/listings", async (c) => {
   const minPrice = c.req.query("min_price");
   const maxPrice = c.req.query("max_price");
   const bedrooms = c.req.query("bedrooms");
+  const verifiedOnly = c.req.query("verified_agents_only") === "1";
   const limit = Math.min(parseInt(c.req.query("limit") ?? "20"), 100);
   const offset = parseInt(c.req.query("offset") ?? "0");
-  let query = `SELECT l.*, GROUP_CONCAT(i.r2_key) as image_keys
+  let query = `SELECT l.*,
+               GROUP_CONCAT(i.r2_key) as image_keys,
+               MAX(CASE WHEN a.verification_status = 'verified' THEN 1 ELSE 0 END) as has_verified_agent
                FROM re_listings l
                LEFT JOIN re_listing_images i ON i.listing_id = l.id AND i.is_primary = 1
+               LEFT JOIN re_agent_listings al ON al.listing_id = l.id AND al.tenant_id = l.tenant_id
+               LEFT JOIN re_agents a ON a.id = al.agent_id
                WHERE l.tenant_id = ? AND l.status = 'active'`;
   const params = [tenantId];
   if (listingType) {
@@ -3309,6 +3314,9 @@ app.get("/api/re/listings", async (c) => {
     query += " AND l.bedrooms >= ?";
     params.push(parseInt(bedrooms));
   }
+  if (verifiedOnly) {
+    query += " AND a.verification_status = 'verified'";
+  }
   query += " GROUP BY l.id ORDER BY l.created_at DESC LIMIT ? OFFSET ?";
   params.push(limit, offset);
   const results = await c.env.DB.prepare(query).bind(...params).all();
@@ -3326,17 +3334,49 @@ app.get("/api/re/listings/:id", async (c) => {
     `SELECT * FROM re_listing_images WHERE listing_id = ? ORDER BY sort_order ASC`
   ).bind(id).all();
   const agents = await c.env.DB.prepare(
-    `SELECT a.id, a.full_name, a.phone, a.email, a.esvarbon_reg_no, a.esvarbon_verified, al.role
+    `SELECT a.id, a.full_name, a.phone, a.email, a.esvarbon_reg_no,
+            a.esvarbon_verified, a.verification_status, a.verified_at, al.role,
+            CASE WHEN a.verification_status = 'verified' THEN 1 ELSE 0 END as is_verified_badge
      FROM re_agent_listings al
      JOIN re_agents a ON a.id = al.agent_id
      WHERE al.listing_id = ? AND al.tenant_id = ?`
   ).bind(id, tenantId).all();
-  return c.json({ success: true, data: { ...listing, images: images.results, agents: agents.results } });
+  const hasVerifiedAgent = agents.results.some((a) => a.is_verified_badge === 1);
+  return c.json({
+    success: true,
+    data: {
+      ...listing,
+      images: images.results,
+      agents: agents.results,
+      has_verified_agent: hasVerifiedAgent
+    }
+  });
 });
 app.post("/api/re/listings", requireRole(["agent", "admin", "super_admin"]), async (c) => {
   const tenantId = getTenantId(c);
   if (!tenantId) return c.json({ success: false, error: "tenant_id required" }, 400);
   const user = c.get("user");
+  const userId = user?.sub ?? null;
+  const userRole = user?.role ?? "agent";
+  if (userRole === "agent") {
+    const agentRecord = await c.env.DB.prepare(
+      `SELECT id, verification_status, esvarbon_verified
+       FROM re_agents WHERE user_id = ? AND tenant_id = ? AND status = 'active'`
+    ).bind(userId, tenantId).first();
+    if (!agentRecord) {
+      return c.json({
+        success: false,
+        error: "No active agent profile found for your account. Contact an admin to register you."
+      }, 403);
+    }
+    if (agentRecord.verification_status !== "verified" || !agentRecord.esvarbon_verified) {
+      return c.json({
+        success: false,
+        error: "Only ESVARBON-verified agents can publish listings. Your verification status: " + agentRecord.verification_status,
+        data: { verification_status: agentRecord.verification_status }
+      }, 403);
+    }
+  }
   const body = await c.req.json();
   if (!body.title || !body.listing_type || !body.property_type || !body.address || !body.city || !body.state) {
     return c.json({ success: false, error: "Missing required fields: title, listing_type, property_type, address, city, state" }, 400);
@@ -3373,7 +3413,7 @@ app.post("/api/re/listings", requireRole(["agent", "admin", "super_admin"]), asy
     body.lga ?? null,
     body.latitude ?? null,
     body.longitude ?? null,
-    user?.sub ?? "system",
+    userId ?? "system",
     now,
     now
   ).run();
@@ -3607,6 +3647,51 @@ app2.post("/api/re/webhooks/paystack", async (c) => {
 });
 var api_default2 = app2;
 
+// src/modules/agents/esvarbon.ts
+async function verifyEsvarbonNumber(regNo, env2) {
+  const apiUrl = env2.ESVARBON_API_URL;
+  const apiKey = env2.ESVARBON_API_KEY;
+  if (!apiUrl) {
+    return { status: "unavailable", reason: "ESVARBON_API_URL not configured \u2014 manual review required" };
+  }
+  try {
+    const url = new URL(`/verify`, apiUrl);
+    url.searchParams.set("reg_no", regNo);
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+        ...apiKey ? { "Authorization": `Bearer ${apiKey}` } : {}
+      },
+      // Cloudflare Workers: fetch timeout via AbortSignal
+      signal: AbortSignal.timeout(8e3)
+    });
+    if (!res.ok) {
+      return {
+        status: "unavailable",
+        reason: `ESVARBON API returned HTTP ${res.status} \u2014 manual review required`
+      };
+    }
+    const body = await res.text();
+    let parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return { status: "unavailable", reason: "ESVARBON API returned non-JSON \u2014 manual review required" };
+    }
+    const found = Boolean(parsed["found"] ?? parsed["exists"] ?? parsed["status"] === "active");
+    const active = Boolean(parsed["active"] ?? parsed["status"] === "active");
+    if (found && active) {
+      return { status: "verified", raw: body };
+    }
+    return { status: "not_found", raw: body };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { status: "unavailable", reason: `ESVARBON API request failed: ${msg} \u2014 manual review required` };
+  }
+}
+__name(verifyEsvarbonNumber, "verifyEsvarbonNumber");
+
 // src/modules/agents/api/index.ts
 var app3 = new Hono2();
 app3.use("/api/re/agents*", jwtAuthMiddleware({ publicRoutes: [] }));
@@ -3615,15 +3700,33 @@ app3.get("/api/re/agents", requireRole(["admin", "super_admin"]), async (c) => {
   if (!tenantId) return c.json({ success: false, error: "tenant_id required" }, 400);
   const limit = Math.min(parseInt(c.req.query("limit") ?? "20"), 100);
   const offset = parseInt(c.req.query("offset") ?? "0");
-  const agents = await c.env.DB.prepare(
-    `SELECT a.*, COUNT(al.listing_id) as active_listings
+  const verificationStatus = c.req.query("verification_status");
+  let query = `SELECT a.*, COUNT(al.listing_id) as active_listings
      FROM re_agents a
      LEFT JOIN re_agent_listings al ON al.agent_id = a.id
-     WHERE a.tenant_id = ? AND a.status = 'active'
-     GROUP BY a.id
-     ORDER BY a.full_name ASC LIMIT ? OFFSET ?`
-  ).bind(tenantId, limit, offset).all();
+     WHERE a.tenant_id = ? AND a.status = 'active'`;
+  const params = [tenantId];
+  if (verificationStatus) {
+    query += " AND a.verification_status = ?";
+    params.push(verificationStatus);
+  }
+  query += " GROUP BY a.id ORDER BY a.full_name ASC LIMIT ? OFFSET ?";
+  params.push(limit, offset);
+  const agents = await c.env.DB.prepare(query).bind(...params).all();
   return c.json({ success: true, data: agents.results, meta: { limit, offset } });
+});
+app3.get("/api/re/agents/pending-verification", requireRole(["admin", "super_admin"]), async (c) => {
+  const tenantId = getTenantId(c);
+  if (!tenantId) return c.json({ success: false, error: "tenant_id required" }, 400);
+  const agents = await c.env.DB.prepare(
+    `SELECT id, tenant_id, user_id, full_name, phone, email,
+            esvarbon_reg_no, verification_status, esvarbon_doc_key,
+            esvarbon_doc_uploaded_at, verification_requested_at, created_at
+     FROM re_agents
+     WHERE tenant_id = ? AND verification_status IN ('pending_docs', 'manual_review')
+     ORDER BY verification_requested_at ASC`
+  ).bind(tenantId).all();
+  return c.json({ success: true, data: agents.results });
 });
 app3.get("/api/re/agents/:id", requireRole(["admin", "super_admin", "agent"]), async (c) => {
   const tenantId = getTenantId(c);
@@ -3652,8 +3755,10 @@ app3.post("/api/re/agents", requireRole(["admin", "super_admin"]), async (c) => 
   const id = `re_agt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   const now = Date.now();
   await c.env.DB.prepare(
-    `INSERT INTO re_agents (id, tenant_id, user_id, full_name, phone, email, esvarbon_reg_no, esvarbon_verified, bio, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'active', ?, ?)`
+    `INSERT INTO re_agents
+       (id, tenant_id, user_id, full_name, phone, email, esvarbon_reg_no,
+        esvarbon_verified, verification_status, bio, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'unverified', ?, 'active', ?, ?)`
   ).bind(
     id,
     tenantId,
@@ -3666,7 +3771,7 @@ app3.post("/api/re/agents", requireRole(["admin", "super_admin"]), async (c) => 
     now,
     now
   ).run();
-  return c.json({ success: true, data: { id, status: "active" } }, 201);
+  return c.json({ success: true, data: { id, status: "active", verification_status: "unverified" } }, 201);
 });
 app3.patch("/api/re/agents/:id", requireRole(["admin", "super_admin"]), async (c) => {
   const tenantId = getTenantId(c);
@@ -3674,7 +3779,7 @@ app3.patch("/api/re/agents/:id", requireRole(["admin", "super_admin"]), async (c
   const id = c.req.param("id");
   const body = await c.req.json();
   const now = Date.now();
-  const allowed = ["full_name", "phone", "email", "esvarbon_reg_no", "esvarbon_verified", "bio", "status"];
+  const allowed = ["full_name", "phone", "email", "esvarbon_reg_no", "bio", "status"];
   const updates = [];
   const params = [];
   for (const key of allowed) {
@@ -3692,11 +3797,200 @@ app3.patch("/api/re/agents/:id", requireRole(["admin", "super_admin"]), async (c
   if (!result.meta.changes) return c.json({ success: false, error: "Agent not found" }, 404);
   return c.json({ success: true, data: { id, updated_at: now } });
 });
+app3.post("/api/re/agents/:id/documents", requireRole(["admin", "super_admin", "agent"]), async (c) => {
+  const tenantId = getTenantId(c);
+  if (!tenantId) return c.json({ success: false, error: "tenant_id required" }, 400);
+  const agentId = c.req.param("id");
+  const agent = await c.env.DB.prepare(
+    `SELECT id, verification_status FROM re_agents WHERE id = ? AND tenant_id = ?`
+  ).bind(agentId, tenantId).first();
+  if (!agent) return c.json({ success: false, error: "Agent not found" }, 404);
+  if (agent.verification_status === "verified") {
+    return c.json({ success: false, error: "Agent is already verified" }, 400);
+  }
+  const formData = await c.req.formData();
+  const file = formData.get("document");
+  if (!file || !(file instanceof File)) {
+    return c.json({ success: false, error: "document file is required (multipart/form-data)" }, 400);
+  }
+  const allowedTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+  if (!allowedTypes.includes(file.type)) {
+    return c.json({ success: false, error: "document must be PDF, JPEG, PNG, or WebP" }, 400);
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    return c.json({ success: false, error: "document must not exceed 10 MB" }, 400);
+  }
+  const now = Date.now();
+  const ext = file.type === "application/pdf" ? "pdf" : file.type.split("/")[1] ?? "bin";
+  const r2Key = `agents/${tenantId}/${agentId}/esvarbon_cert_${now}.${ext}`;
+  await c.env.DOCUMENTS.put(r2Key, await file.arrayBuffer(), {
+    httpMetadata: { contentType: file.type },
+    customMetadata: { tenantId, agentId, uploadedAt: String(now) }
+  });
+  await c.env.DB.prepare(
+    `UPDATE re_agents
+     SET esvarbon_doc_key = ?,
+         esvarbon_doc_uploaded_at = ?,
+         verification_status = CASE WHEN verification_status = 'unverified' THEN 'pending_docs' ELSE verification_status END,
+         updated_at = ?
+     WHERE id = ? AND tenant_id = ?`
+  ).bind(r2Key, now, now, agentId, tenantId).run();
+  return c.json({
+    success: true,
+    data: {
+      agent_id: agentId,
+      doc_key: r2Key,
+      message: "Document uploaded. Admin review is pending."
+    }
+  });
+});
+app3.post("/api/re/agents/:id/verify", requireRole(["admin", "super_admin"]), async (c) => {
+  const tenantId = getTenantId(c);
+  if (!tenantId) return c.json({ success: false, error: "tenant_id required" }, 400);
+  const agentId = c.req.param("id");
+  const now = Date.now();
+  const agent = await c.env.DB.prepare(
+    `SELECT id, esvarbon_reg_no, verification_status FROM re_agents WHERE id = ? AND tenant_id = ?`
+  ).bind(agentId, tenantId).first();
+  if (!agent) return c.json({ success: false, error: "Agent not found" }, 404);
+  if (agent.verification_status === "verified") {
+    return c.json({ success: false, error: "Agent is already verified" }, 400);
+  }
+  if (!agent.esvarbon_reg_no) {
+    return c.json({ success: false, error: "Agent has no ESVARBON registration number on record" }, 400);
+  }
+  await c.env.DB.prepare(
+    `UPDATE re_agents SET verification_status = 'pending_api', verification_requested_at = ?, updated_at = ?
+     WHERE id = ? AND tenant_id = ?`
+  ).bind(now, now, agentId, tenantId).run();
+  const result = await verifyEsvarbonNumber(agent.esvarbon_reg_no, {
+    ESVARBON_API_URL: c.env.ESVARBON_API_URL,
+    ESVARBON_API_KEY: c.env["ESVARBON_API_KEY"]
+  });
+  if (result.status === "verified") {
+    await c.env.DB.prepare(
+      `UPDATE re_agents
+       SET verification_status = 'verified',
+           esvarbon_verified = 1,
+           verification_method = 'esvarbon_api',
+           esvarbon_api_raw = ?,
+           verified_at = ?,
+           rejection_reason = NULL,
+           updated_at = ?
+       WHERE id = ? AND tenant_id = ?`
+    ).bind(result.raw, now, now, agentId, tenantId).run();
+    return c.json({
+      success: true,
+      data: { agent_id: agentId, verification_status: "verified", method: "esvarbon_api" }
+    });
+  }
+  if (result.status === "not_found") {
+    await c.env.DB.prepare(
+      `UPDATE re_agents
+       SET verification_status = 'rejected',
+           esvarbon_verified = 0,
+           esvarbon_api_raw = ?,
+           rejection_reason = 'ESVARBON registration number not found or inactive in the register',
+           updated_at = ?
+       WHERE id = ? AND tenant_id = ?`
+    ).bind(result.raw, now, agentId, tenantId).run();
+    return c.json({
+      success: false,
+      data: { agent_id: agentId, verification_status: "rejected" },
+      error: "ESVARBON number not found or inactive \u2014 agent has been rejected"
+    }, 422);
+  }
+  await c.env.DB.prepare(
+    `UPDATE re_agents
+     SET verification_status = 'manual_review',
+         verification_requested_at = ?,
+         updated_at = ?
+     WHERE id = ? AND tenant_id = ?`
+  ).bind(now, now, agentId, tenantId).run();
+  return c.json({
+    success: true,
+    data: {
+      agent_id: agentId,
+      verification_status: "manual_review",
+      message: result.reason
+    }
+  });
+});
+app3.post("/api/re/agents/:id/verification/approve", requireRole(["admin", "super_admin"]), async (c) => {
+  const tenantId = getTenantId(c);
+  if (!tenantId) return c.json({ success: false, error: "tenant_id required" }, 400);
+  const agentId = c.req.param("id");
+  const user = c.get("user");
+  const adminId = user?.sub ?? "unknown";
+  const now = Date.now();
+  const agent = await c.env.DB.prepare(
+    `SELECT id, verification_status FROM re_agents WHERE id = ? AND tenant_id = ?`
+  ).bind(agentId, tenantId).first();
+  if (!agent) return c.json({ success: false, error: "Agent not found" }, 404);
+  if (agent.verification_status === "verified") {
+    return c.json({ success: false, error: "Agent is already verified" }, 400);
+  }
+  if (!["pending_docs", "manual_review", "rejected", "pending_api"].includes(agent.verification_status)) {
+    return c.json({
+      success: false,
+      error: `Agent verification_status '${agent.verification_status}' cannot be approved`
+    }, 400);
+  }
+  await c.env.DB.prepare(
+    `UPDATE re_agents
+     SET verification_status = 'verified',
+         esvarbon_verified = 1,
+         verification_method = 'manual',
+         verified_at = ?,
+         verified_by = ?,
+         rejection_reason = NULL,
+         updated_at = ?
+     WHERE id = ? AND tenant_id = ?`
+  ).bind(now, adminId, now, agentId, tenantId).run();
+  return c.json({
+    success: true,
+    data: { agent_id: agentId, verification_status: "verified", method: "manual", verified_by: adminId }
+  });
+});
+app3.post("/api/re/agents/:id/verification/reject", requireRole(["admin", "super_admin"]), async (c) => {
+  const tenantId = getTenantId(c);
+  if (!tenantId) return c.json({ success: false, error: "tenant_id required" }, 400);
+  const agentId = c.req.param("id");
+  const body = await c.req.json().catch(() => ({}));
+  const now = Date.now();
+  const agent = await c.env.DB.prepare(
+    `SELECT id, verification_status FROM re_agents WHERE id = ? AND tenant_id = ?`
+  ).bind(agentId, tenantId).first();
+  if (!agent) return c.json({ success: false, error: "Agent not found" }, 404);
+  await c.env.DB.prepare(
+    `UPDATE re_agents
+     SET verification_status = 'rejected',
+         esvarbon_verified = 0,
+         rejection_reason = ?,
+         updated_at = ?
+     WHERE id = ? AND tenant_id = ?`
+  ).bind(body.reason ?? "Rejected by admin", now, agentId, tenantId).run();
+  return c.json({
+    success: true,
+    data: { agent_id: agentId, verification_status: "rejected", reason: body.reason ?? "Rejected by admin" }
+  });
+});
 app3.post("/api/re/agents/:id/listings/:listingId", requireRole(["admin", "super_admin"]), async (c) => {
   const tenantId = getTenantId(c);
   if (!tenantId) return c.json({ success: false, error: "tenant_id required" }, 400);
   const agentId = c.req.param("id");
   const listingId = c.req.param("listingId");
+  const agent = await c.env.DB.prepare(
+    `SELECT id, verification_status, esvarbon_verified FROM re_agents WHERE id = ? AND tenant_id = ?`
+  ).bind(agentId, tenantId).first();
+  if (!agent) return c.json({ success: false, error: "Agent not found" }, 404);
+  if (agent.verification_status !== "verified" || !agent.esvarbon_verified) {
+    return c.json({
+      success: false,
+      error: "Only ESVARBON-verified agents may be assigned to listings",
+      data: { verification_status: agent.verification_status }
+    }, 403);
+  }
   const body = await c.req.json().catch(() => ({}));
   const role = body.role ?? "primary";
   const assignId = `re_al_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -3789,7 +4083,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env2, _ctx, middlewareCtx
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-qGdPXo/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-CoLHMn/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -3821,7 +4115,7 @@ function __facade_invoke__(request, env2, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-qGdPXo/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-CoLHMn/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;
