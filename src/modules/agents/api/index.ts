@@ -35,7 +35,7 @@ export interface Env {
 
 const app = new Hono<{ Bindings: Env }>();
 
-app.use('/api/re/agents*', jwtAuthMiddleware({ publicRoutes: [] }));
+app.use('/api/re/*', jwtAuthMiddleware({ publicRoutes: [] }));
 
 // ─── GET /api/re/agents — List agents ─────────────────────────────────────────
 app.get('/api/re/agents', requireRole(['admin', 'super_admin']), async (c) => {
