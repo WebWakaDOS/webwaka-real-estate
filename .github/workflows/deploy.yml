@@ -61,7 +61,7 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build || true
+        run: npm run build:worker || true
         env:
           NODE_ENV: staging
 
@@ -108,7 +108,7 @@ jobs:
         run: npm ci
 
       - name: Build application
-        run: npm run build || true
+        run: npm run build:worker || true
         env:
           NODE_ENV: staging
 
@@ -117,7 +117,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 migrations apply modules_prod --env staging --remote
+          command: d1 migrations apply DB --env staging --remote
         continue-on-error: true  # D1 may need upgrade
 
       - name: Deploy Workers to Staging
@@ -163,7 +163,7 @@ jobs:
         run: npm ci
 
       - name: Build application
-        run: npm run build || true
+        run: npm run build:worker || true
         env:
           NODE_ENV: production
 
@@ -172,7 +172,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 migrations apply modules_prod --env production --remote
+          command: d1 migrations apply DB --env production --remote
         continue-on-error: true  # D1 may need upgrade
 
       - name: Deploy Workers to Production
