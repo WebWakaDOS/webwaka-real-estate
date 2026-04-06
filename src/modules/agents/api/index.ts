@@ -187,11 +187,13 @@ app.post('/api/re/agents/:id/documents', requireRole(['admin', 'super_admin', 'a
   }
 
   const formData = await c.req.formData();
-  const file = formData.get('document');
+  const rawFile = formData.get('document');
 
-  if (!file || !(file instanceof File)) {
+  // FormDataEntryValue = File | string; guard out the string case before using File methods.
+  if (!rawFile || typeof rawFile === 'string') {
     return c.json({ success: false, error: 'document file is required (multipart/form-data)' }, 400);
   }
+  const file = rawFile as File;
 
   // Validate file type
   const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
@@ -380,7 +382,7 @@ app.post('/api/re/agents/:id/verification/reject', requireRole(['admin', 'super_
   if (!tenantId) return c.json({ success: false, error: 'tenant_id required' }, 400);
 
   const agentId = c.req.param('id');
-  const body = await c.req.json<{ reason?: string }>().catch(() => ({}));
+  const body = await c.req.json<{ reason?: string }>().catch((): { reason?: string } => ({}));
   const now = Date.now();
 
   const agent = await c.env.DB.prepare(
@@ -430,7 +432,7 @@ app.post('/api/re/agents/:id/listings/:listingId', requireRole(['admin', 'super_
     }, 403);
   }
 
-  const body = await c.req.json<{ role?: string }>().catch(() => ({}));
+  const body = await c.req.json<{ role?: string }>().catch((): { role?: string } => ({}));
   const role = body.role ?? 'primary';
 
   const assignId = `re_al_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;

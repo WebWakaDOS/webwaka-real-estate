@@ -258,7 +258,7 @@ app.post(
       }, 503);
     }
 
-    const body = await c.req.json<{ email?: string; callback_url?: string }>().catch(() => ({}));
+    const body = await c.req.json<{ email?: string; callback_url?: string }>().catch((): { email?: string; callback_url?: string } => ({}));
     const email = body.email ?? txn.buyer_email;
 
     if (!email) {
